@@ -1,0 +1,7 @@
+Flask==2.0.1
+SpeechRecognition
+pyaudio
+opencv-python-headless
+numpy
+gtts
+playsound3
