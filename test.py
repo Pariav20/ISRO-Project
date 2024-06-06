@@ -123,12 +123,15 @@ def main():
 
     st.title("Image Processing with Voice Commands or Text Input")
 
-    # Upload image
-    uploaded_file = st.file_uploader("Choose an image:", type=["jpg", "jpeg", "png"])
+    # Upload multiple images
+    uploaded_files = st.file_uploader("Choose images:", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-    if uploaded_file is not None:
-        image = cv2.imdecode(np.frombuffer(uploaded_file.read(), np.uint8), cv2.IMREAD_COLOR)
-        st.image(image, channels="BGR")
+    if uploaded_files is not None and len(uploaded_files) > 0:
+        images = []
+        for uploaded_file in uploaded_files:
+            image = cv2.imdecode(np.frombuffer(uploaded_file.read(), np.uint8), cv2.IMREAD_COLOR)
+            images.append(image)
+            st.image(image, channels="BGR", caption=uploaded_file.name)
 
         # Command options
         command_options = ["grayscale", "invert", "blur", "resize", "crop", "rotate", "add", "subtract", "multiply", "divide"]
@@ -148,29 +151,36 @@ def main():
             command = command_parts[0]
             param = command_parts[1:] if len(command_parts) > 1 else None
 
-        # Process image if a valid command is received
+        # Process each image if a valid command is received
         if command:
-            processed_image = process_image(image.copy(), command, param)
-            if processed_image is not None:
-                st.write("Processed Image:")
-                if len(processed_image.shape) == 2:  # Check if the image is grayscale
-                    st.image(processed_image, channels="GRAY")
-                else:
-                    st.image(processed_image, channels="BGR")
+            processed_images = []
+            for image in images:
+                processed_image = process_image(image.copy(), command, param)
+                if processed_image is not None:
+                    processed_images.append(processed_image)
 
-                # Download button for processed image
-                if st.button("Download Processed Image"):
-                    cv2.imwrite("processed_image.jpg", processed_image)
-                    with open("processed_image.jpg", "rb") as file:
+            if len(processed_images) > 0:
+                st.write("Processed Images:")
+                for i, processed_image in enumerate(processed_images):
+                    if len(processed_image.shape) == 2:  # Check if the image is grayscale
+                        st.image(processed_image, channels="GRAY", caption=f"Processed Image {i+1}")
+                    else:
+                        st.image(processed_image, channels="BGR", caption=f"Processed Image {i+1}")
+
+                # Download button for each processed image
+                for i, processed_image in enumerate(processed_images):
+                    st.write(f"Download Processed Image {i+1}")
+                    cv2.imwrite(f"processed_image_{i+1}.jpg", processed_image)
+                    with open(f"processed_image_{i+1}.jpg", "rb") as file:
                         btn = st.download_button(
-                            label="Download Processed Image",
+                            label=f"Download Processed Image {i+1}",
                             data=file,
-                            file_name="processed_image.jpg",
+                            file_name=f"processed_image_{i+1}.jpg",
                             mime="image/jpeg"
                         )
-                        st.success("Processed image ready for download.")
+                        st.success(f"Processed image {i+1} ready for download.")
             else:
-                st.error("Error processing image. Please try again.")
+                st.error("Error processing images. Please try again.")
 
 if __name__ == "__main__":
     main()
