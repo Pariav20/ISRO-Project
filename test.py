@@ -90,8 +90,31 @@ def process_image(image, command, param=None):
         # Perform the actual rotation and return the image
         rotated_image = cv2.warpAffine(image, rotation_matrix, (new_width, new_height))
         return rotated_image
+    elif command in ["add", "subtract", "multiply", "divide"]:
+        # Handle arithmetic operations
+        try:
+            value = float(param[0]) if param else 0
+        except (ValueError, TypeError):
+            st.warning(f"Invalid value for {command}. Using default (0).")
+            value = 0
+
+        value_matrix = np.full(image.shape, value, dtype=image.dtype)
+        
+        if command == "add":
+            result_image = cv2.add(image, value_matrix)
+        elif command == "subtract":
+            result_image = cv2.subtract(image, value_matrix)
+        elif command == "multiply":
+            result_image = cv2.multiply(image, value_matrix.astype(image.dtype))
+        elif command == "divide":
+            if value == 0:
+                st.error("Division by zero is not allowed.")
+                return image
+            result_image = cv2.divide(image.astype(np.float32), value_matrix.astype(np.float32))
+            result_image = np.clip(result_image, 0, 255).astype(np.uint8)
+        return result_image
     else:
-        st.error("Invalid command. Supported commands: grayscale, invert, blur [strength], resize [width height], crop [top left bottom right], rotate [angle]")
+        st.error("Invalid command. Supported commands: grayscale, invert, blur [strength], resize [width height], crop [top left bottom right], rotate [angle], add [value], subtract [value], multiply [value], divide [value]")
         return image
 
 # Main app
@@ -108,7 +131,7 @@ def main():
         st.image(image, channels="BGR")
 
         # Command options
-        command_options = ["grayscale", "invert", "blur", "resize", "crop", "rotate"]
+        command_options = ["grayscale", "invert", "blur", "resize", "crop", "rotate", "add", "subtract", "multiply", "divide"]
         command_text = st.text_input("Enter command details (optional):")
         use_voice_command = st.button("Use voice command")
 
