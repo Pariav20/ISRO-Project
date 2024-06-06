@@ -62,8 +62,36 @@ def process_image(image, command, param=None):
             top, left, bottom, right = 0, 0, image.shape[0], image.shape[1]
         cropped_image = image[top:bottom, left:right]
         return cropped_image
+    elif command == "rotate":
+        # Handle optional angle parameter, validate it's a number
+        try:
+            angle = float(param[0]) if param else 0
+        except (ValueError, TypeError):
+            st.warning("Invalid angle. Using default (0).")
+            angle = 0
+
+        # Compute the center of the image
+        height, width = image.shape[:2]
+        center = (width // 2, height // 2)
+
+        # Compute the rotation matrix
+        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+
+        # Compute the new bounding dimensions of the image
+        cos = np.abs(rotation_matrix[0, 0])
+        sin = np.abs(rotation_matrix[0, 1])
+        new_width = int((height * sin) + (width * cos))
+        new_height = int((height * cos) + (width * sin))
+
+        # Adjust the rotation matrix to take into account the new dimensions
+        rotation_matrix[0, 2] += (new_width / 2) - center[0]
+        rotation_matrix[1, 2] += (new_height / 2) - center[1]
+
+        # Perform the actual rotation and return the image
+        rotated_image = cv2.warpAffine(image, rotation_matrix, (new_width, new_height))
+        return rotated_image
     else:
-        st.error("Invalid command. Supported commands: grayscale, invert, blur [strength], resize [width height], crop [top left bottom right]")
+        st.error("Invalid command. Supported commands: grayscale, invert, blur [strength], resize [width height], crop [top left bottom right], rotate [angle]")
         return image
 
 # Main app
@@ -80,7 +108,7 @@ def main():
         st.image(image, channels="BGR")
 
         # Command options
-        command_options = ["grayscale", "invert", "blur", "resize", "crop"]
+        command_options = ["grayscale", "invert", "blur", "resize", "crop", "rotate"]
         command_text = st.text_input("Enter command details (optional):")
         use_voice_command = st.button("Use voice command")
 
@@ -100,20 +128,26 @@ def main():
         # Process image if a valid command is received
         if command:
             processed_image = process_image(image.copy(), command, param)
-            st.write("Processed Image:")
-            st.image(processed_image, channels="BGR")
+            if processed_image is not None:
+                st.write("Processed Image:")
+                if len(processed_image.shape) == 2:  # Check if the image is grayscale
+                    st.image(processed_image, channels="GRAY")
+                else:
+                    st.image(processed_image, channels="BGR")
 
-            # Download button for processed image
-            if st.button("Download Processed Image"):
-                cv2.imwrite("processed_image.jpg", processed_image)
-                with open("processed_image.jpg", "rb") as file:
-                    btn = st.download_button(
-                        label="Download Processed Image",
-                        data=file,
-                        file_name="processed_image.jpg",
-                        mime="image/jpeg"
-                    )
-                    st.success("Processed image ready for download.")
+                # Download button for processed image
+                if st.button("Download Processed Image"):
+                    cv2.imwrite("processed_image.jpg", processed_image)
+                    with open("processed_image.jpg", "rb") as file:
+                        btn = st.download_button(
+                            label="Download Processed Image",
+                            data=file,
+                            file_name="processed_image.jpg",
+                            mime="image/jpeg"
+                        )
+                        st.success("Processed image ready for download.")
+            else:
+                st.error("Error processing image. Please try again.")
 
 if __name__ == "__main__":
     main()
