@@ -1,3 +1,12 @@
+import subprocess
+import sys
+
+try:
+    import pywt
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "PyWavelets"])
+    import pywt  # Now the import should succeed
+
 import speech_recognition as sr
 import cv2
 import numpy as np
@@ -128,8 +137,8 @@ def process_image(image, command, param=None):
             return None
         return stitched_image
     elif command == "denoise":
-        sigma_est = np.mean(estimate_sigma(image, multichannel=True))
-        denoised_image = denoise_nl_means(image, h=1.15 * sigma_est, fast_mode=True, patch_size=5, patch_distance=3, multichannel=True)
+        sigma_est = np.mean(estimate_sigma(image))
+        denoised_image = denoise_nl_means(image, h=1.15 * sigma_est, fast_mode=True, patch_size=5, patch_distance=3)
         denoised_image = (denoised_image * 255).astype(np.uint8)
         return denoised_image
     elif command == "pca":
@@ -165,93 +174,54 @@ def process_image(image, command, param=None):
         selem = disk(30)
         enhanced_image = rank.equalize(gray_image, selem=selem)
         return enhanced_image
+    elif command == "feature_extraction":
+        method = param[0] if param else "sift"
+        return feature_extraction(image, method)
     else:
-        st.error("Invalid command. Supported commands: grayscale, invert, blur [strength], resize [width height], crop [top left bottom right], rotate [angle], add [value], subtract [value], multiply [value], divide [value], histogram, stitch, denoise, pca [components], sift, mean, median, max, min, enhance")
+        st.error("Invalid command. Supported commands: grayscale, invert, blur [strength], resize [width height], crop [top left bottom right], rotate [angle], add [value], subtract [value], multiply [value], divide [value], histogram, stitch, denoise, pca [components], sift, mean, median, max, min, enhance, feature_extraction [method]")
         return image
 
-# Main app
+# Function for feature extraction
+def feature_extraction(image, method="sift"):
+    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    if method == "sift":
+        sift = cv2.SIFT_create()
+        keypoints, descriptors = sift.detectAndCompute(gray_image, None)
+        feature_image = cv2.drawKeypoints(image, keypoints, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    elif method == "orb":
+        orb = cv2.ORB_create()
+        keypoints, descriptors = orb.detectAndCompute(gray_image, None)
+        feature_image = cv2.drawKeypoints(image, keypoints, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    elif method == "harris":
+        gray = np.float32(gray_image)
+        harris_corners = cv2.cornerHarris(gray, 2, 3, 0.04)
+        harris_corners = cv2.dilate(harris_corners, None)
+        image[harris_corners > 0.01 * harris_corners.max()] = [0, 0, 255]
+        feature_image = image
+    else:
+        st.error("Unsupported feature extraction method. Supported methods: sift, orb, harris")
+        return image
+
+    return feature_image
+
+# Main function for streamlit app
 def main():
-    """Image processing app with voice commands or text input"""
+    st.title("Image Processing App")
 
-    st.title("Image Processing with Voice Commands or Text Input")
+    uploaded_file = st.file_uploader("Choose an image file", type=["tif", "tiff", "png", "jpg", "jpeg"])
+    if uploaded_file is not None:
+        image = read_geotiff(uploaded_file) if uploaded_file.name.endswith((".tif", ".tiff")) else np.array(bytearray(uploaded_file.read()), dtype=np.uint8)
+        if uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
+            image = cv2.imdecode(image, cv2.IMREAD_COLOR)
 
-    # Upload multiple images
-    uploaded_files = st.file_uploader("Choose images:", type=["jpg", "jpeg", "png", "tif", "tiff", "geotiff"], accept_multiple_files=True)
-
-    if uploaded_files is not None and len(uploaded_files) > 0:
-        images = []
-        for uploaded_file in uploaded_files:
-            file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
-            if uploaded_file.type in ['image/tiff', 'image/tif', 'image/geotiff']:
-                image = read_geotiff(uploaded_file)
-            else:
-                image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            images.append(image)
-            st.image(image, channels="BGR", caption=uploaded_file.name)
-
-        # Command options
-        command_options = ["grayscale", "invert", "blur", "resize", "crop", "rotate", "add", "subtract", "multiply", "divide", "histogram", "stitch", "denoise", "pca", "sift", "mean", "median", "max", "min", "enhance"]
-        command_text = st.text_input("Enter command details (optional):")
-        use_voice_command = st.button("Use voice command")
-
-        command, param = None, None
-
-        # Extract command and parameter from voice recognition or text input
-        if use_voice_command:
-            command_parts = get_voice_command()  # Retry on failures
-            if command_parts:
-                command = command_parts[0]
-                param = command_parts[1:] if len(command_parts) > 1 else None
-        elif command_text:
-            command_parts = command_text.lower().split()
-            command = command_parts[0]
-            param = command_parts[1:] if len(command_parts) > 1 else None
-
-        # Process each image if a valid command is received
+        st.image(image, caption='Uploaded Image', use_column_width=True)
+        
+        command = get_voice_command()
         if command:
-            processed_images = []
-            if command == "stitch":
-                stitched_image = process_image(None, command, images)
-                if stitched_image is not None:
-                    st.image(stitched_image, channels="BGR", caption="Stitched Image")
-                    st.write("Download Stitched Image")
-                    cv2.imwrite("stitched_image.jpg", stitched_image)
-                    with open("stitched_image.jpg", "rb") as file:
-                        btn = st.download_button(
-                            label="Download Stitched Image",
-                            data=file,
-                            file_name="stitched_image.jpg",
-                            mime="image/jpeg"
-                        )
-                        st.success("Stitched image ready for download.")
-            else:
-                for image in images:
-                    processed_image = process_image(image.copy(), command, param)
-                    if processed_image is not None:
-                        processed_images.append(processed_image)
-
-                if len(processed_images) > 0:
-                    st.write("Processed Images:")
-                    for i, processed_image in enumerate(processed_images):
-                        if len(processed_image.shape) == 2:  # Check if the image is grayscale
-                            st.image(processed_image, channels="GRAY", caption=f"Processed Image {i+1}")
-                        else:
-                            st.image(processed_image, channels="BGR", caption=f"Processed Image {i+1}")
-
-                    # Download button for each processed image
-                    for i, processed_image in enumerate(processed_images):
-                        st.write(f"Download Processed Image {i+1}")
-                        cv2.imwrite(f"processed_image_{i+1}.jpg", processed_image)
-                        with open(f"processed_image_{i+1}.jpg", "rb") as file:
-                            btn = st.download_button(
-                                label=f"Download Processed Image {i+1}",
-                                data=file,
-                                file_name=f"processed_image_{i+1}.jpg",
-                                mime="image/jpeg"
-                            )
-                            st.success(f"Processed image {i+1} ready for download.")
-                else:
-                    st.error("Error processing images. Please try again.")
+            processed_image = process_image(image.copy(), command[0], command[1:])
+            if processed_image is not None:
+                st.image(processed_image, caption='Processed Image', use_column_width=True)
 
 if __name__ == "__main__":
     main()
