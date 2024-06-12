@@ -2,6 +2,13 @@ import speech_recognition as sr
 import cv2
 import numpy as np
 import streamlit as st
+import rasterio
+from rasterio.plot import reshape_as_image
+from skimage.restoration import denoise_nl_means, estimate_sigma
+from sklearn.decomposition import PCA
+from skimage.feature import peak_local_max
+from skimage.filters import rank
+from skimage.morphology import disk
 
 # Function to capture and recognize speech (with follow-up prompt and retry)
 def get_voice_command(retries=3):
@@ -23,6 +30,13 @@ def get_voice_command(retries=3):
             st.error("Could not request results from Google Speech Recognition service; {0}".format(e))
             return None
 
+# Function to read GeoTIFF images
+def read_geotiff(filepath):
+    with rasterio.open(filepath) as src:
+        image = src.read()
+        image = reshape_as_image(image)
+    return image
+
 # Function to apply image processing with optional parameters and validation
 def process_image(image, command, param=None):
     if command == "grayscale":
@@ -32,7 +46,6 @@ def process_image(image, command, param=None):
         inverted_image = 255 - image
         return inverted_image
     elif command == "blur":
-        # Handle optional blur strength parameter (default 5)
         try:
             strength = int(param[0]) if param else 5
         except (ValueError, TypeError):
@@ -41,7 +54,6 @@ def process_image(image, command, param=None):
         blurred_image = cv2.blur(image, (strength, strength))
         return blurred_image
     elif command == "resize":
-        # Handle optional width and height parameters, validate within image dimensions
         try:
             width, height = (int(param[0]), int(param[1])) if param and len(param) == 2 else (image.shape[1], image.shape[0])
             if width <= 0 or height <= 0:
@@ -52,7 +64,6 @@ def process_image(image, command, param=None):
         resized_image = cv2.resize(image, (width, height))
         return resized_image
     elif command == "crop":
-        # Handle optional top, left, bottom, right coordinates, validate within image dimensions
         try:
             top, left, bottom, right = (int(param[0]), int(param[1]), int(param[2]), int(param[3])) if param and len(param) == 4 else (0, 0, image.shape[0], image.shape[1])
             if top < 0 or left < 0 or bottom > image.shape[0] or right > image.shape[1]:
@@ -63,35 +74,24 @@ def process_image(image, command, param=None):
         cropped_image = image[top:bottom, left:right]
         return cropped_image
     elif command == "rotate":
-        # Handle optional angle parameter, validate it's a number
         try:
             angle = float(param[0]) if param else 0
         except (ValueError, TypeError):
             st.warning("Invalid angle. Using default (0).")
             angle = 0
 
-        # Compute the center of the image
         height, width = image.shape[:2]
         center = (width // 2, height // 2)
-
-        # Compute the rotation matrix
         rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-
-        # Compute the new bounding dimensions of the image
         cos = np.abs(rotation_matrix[0, 0])
         sin = np.abs(rotation_matrix[0, 1])
         new_width = int((height * sin) + (width * cos))
         new_height = int((height * cos) + (width * sin))
-
-        # Adjust the rotation matrix to take into account the new dimensions
         rotation_matrix[0, 2] += (new_width / 2) - center[0]
         rotation_matrix[1, 2] += (new_height / 2) - center[1]
-
-        # Perform the actual rotation and return the image
         rotated_image = cv2.warpAffine(image, rotation_matrix, (new_width, new_height))
         return rotated_image
     elif command in ["add", "subtract", "multiply", "divide"]:
-        # Handle arithmetic operations
         try:
             value = float(param[0]) if param else 0
         except (ValueError, TypeError):
@@ -99,7 +99,6 @@ def process_image(image, command, param=None):
             value = 0
 
         value_matrix = np.full(image.shape, value, dtype=image.dtype)
-        
         if command == "add":
             result_image = cv2.add(image, value_matrix)
         elif command == "subtract":
@@ -114,24 +113,60 @@ def process_image(image, command, param=None):
             result_image = np.clip(result_image, 0, 255).astype(np.uint8)
         return result_image
     elif command == "histogram":
-        # Handle histogram equalization
-        if len(image.shape) == 2:  # Grayscale image
+        if len(image.shape) == 2:
             hist_eq_image = cv2.equalizeHist(image)
-        else:  # Color image
+        else:
             ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
             ycrcb[:, :, 0] = cv2.equalizeHist(ycrcb[:, :, 0])
             hist_eq_image = cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
         return hist_eq_image
     elif command == "stitch":
-        # Handle image stitching
         stitcher = cv2.Stitcher_create()
         status, stitched_image = stitcher.stitch(param)
         if status != cv2.Stitcher_OK:
             st.error("Error stitching images.")
             return None
         return stitched_image
+    elif command == "denoise":
+        sigma_est = np.mean(estimate_sigma(image, multichannel=True))
+        denoised_image = denoise_nl_means(image, h=1.15 * sigma_est, fast_mode=True, patch_size=5, patch_distance=3, multichannel=True)
+        denoised_image = (denoised_image * 255).astype(np.uint8)
+        return denoised_image
+    elif command == "pca":
+        pca = PCA(n_components=int(param[0]) if param else 3)
+        reshaped_image = image.reshape((-1, 3))
+        pca_result = pca.fit_transform(reshaped_image)
+        pca_image = pca_result.reshape(image.shape)
+        return pca_image
+    elif command == "sift":
+        sift = cv2.SIFT_create()
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        keypoints, descriptors = sift.detectAndCompute(gray_image, None)
+        sift_image = cv2.drawKeypoints(gray_image, keypoints, image)
+        return sift_image
+    elif command == "mean":
+        mean_value = np.mean(image)
+        st.write(f"Mean value of the image: {mean_value}")
+        return image
+    elif command == "median":
+        median_value = np.median(image)
+        st.write(f"Median value of the image: {median_value}")
+        return image
+    elif command == "max":
+        max_value = np.max(image)
+        st.write(f"Max value of the image: {max_value}")
+        return image
+    elif command == "min":
+        min_value = np.min(image)
+        st.write(f"Min value of the image: {min_value}")
+        return image
+    elif command == "enhance":
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        selem = disk(30)
+        enhanced_image = rank.equalize(gray_image, selem=selem)
+        return enhanced_image
     else:
-        st.error("Invalid command. Supported commands: grayscale, invert, blur [strength], resize [width height], crop [top left bottom right], rotate [angle], add [value], subtract [value], multiply [value], divide [value], histogram, stitch")
+        st.error("Invalid command. Supported commands: grayscale, invert, blur [strength], resize [width height], crop [top left bottom right], rotate [angle], add [value], subtract [value], multiply [value], divide [value], histogram, stitch, denoise, pca [components], sift, mean, median, max, min, enhance")
         return image
 
 # Main app
@@ -141,21 +176,21 @@ def main():
     st.title("Image Processing with Voice Commands or Text Input")
 
     # Upload multiple images
-    uploaded_files = st.file_uploader("Choose images:", type=["jpg", "jpeg", "png", "tif", "tiff"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Choose images:", type=["jpg", "jpeg", "png", "tif", "tiff", "geotiff"], accept_multiple_files=True)
 
     if uploaded_files is not None and len(uploaded_files) > 0:
         images = []
         for uploaded_file in uploaded_files:
             file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
-            if uploaded_file.type in ['image/tiff', 'image/tif']:
-                image = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
+            if uploaded_file.type in ['image/tiff', 'image/tif', 'image/geotiff']:
+                image = read_geotiff(uploaded_file)
             else:
                 image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
             images.append(image)
             st.image(image, channels="BGR", caption=uploaded_file.name)
 
         # Command options
-        command_options = ["grayscale", "invert", "blur", "resize", "crop", "rotate", "add", "subtract", "multiply", "divide", "histogram", "stitch"]
+        command_options = ["grayscale", "invert", "blur", "resize", "crop", "rotate", "add", "subtract", "multiply", "divide", "histogram", "stitch", "denoise", "pca", "sift", "mean", "median", "max", "min", "enhance"]
         command_text = st.text_input("Enter command details (optional):")
         use_voice_command = st.button("Use voice command")
 
