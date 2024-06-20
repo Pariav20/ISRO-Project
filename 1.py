@@ -121,7 +121,6 @@ def feature_extraction(image, method="sift"):
 
     return feature_image
 
-
 def main():
     st.title("Image Processing Chat Bot")
 
@@ -140,13 +139,15 @@ def main():
                 processed_image = process_image(image, commands)
                 st.image(processed_image, caption='Processed Image', use_column_width=True)
 
-                st.header("Additional Operations:")
+                additional_commands = []
                 while True:
                     additional_command = st.text_input("Enter additional command (or leave blank to finish)")
-                    if not additional_command:
+                    if additional_command:
+                        processed_image = apply_command(processed_image, *additional_command.split())
+                        st.image(processed_image, caption='Processed Image with Additional Command', use_column_width=True)
+                    else:
+                        
                         break
-                    processed_image = apply_command(processed_image, *additional_command.split())
-                    st.image(processed_image, caption='Processed Image', use_column_width=True)
 
                 if st.button("Download Processed Image"):
                     img_bytes = cv2.imencode(".jpg", processed_image)[1].tobytes()
